@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.env
+.bkit/
+logs/
+config.local.json
+.pytest_cache/
+read-access.json

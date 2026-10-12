@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS</title>
+<style>
+  :root {
+    --bg: #0a0e0f; --panel: #0f1517; --line: #1d282b; --text: #c6d3d0; --dim: #6c7f7b;
+    --accent: #5ad1c0; --warn: #e2a64b; --bad: #e0675a; --ok: #7fcf7a;
+    --mono: "Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.5 var(--mono); display: flex; flex-direction: column; }
+  header { display: flex; gap: 18px; align-items: baseline; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  header b { color: var(--accent); letter-spacing: .25em; font-size: 15px; }
+  header .dim { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #clock { margin-left: auto; color: var(--text); }
+  #link.down { color: var(--bad); }
+  header button { align-self: center; padding: 2px 10px; font-size: 12px; }
+  button.tool { color: var(--dim); border-color: var(--line); }
+  button.tool:hover { color: var(--accent); border-color: var(--accent); }
+  /* 재시작은 영향이 크다 — 새로고침과 멀리, 빨간색, 두 번 눌러야 실행 */
+  #restart { margin-left: 28px; color: var(--bad); border-color: var(--bad); }
+  #restart:hover { background: rgba(224, 103, 90, .15); }
+  #restart.armed { background: var(--bad); color: var(--bg); font-weight: 600; }
+  #restart:disabled { opacity: .6; cursor: wait; }
+  main { flex: 1; min-height: 0; display: grid; gap: 10px; padding: 10px 16px;
+         grid-template-columns: minmax(240px, 300px) 1fr minmax(260px, 330px);
+         grid-template-rows: auto 1fr; grid-template-areas: "voice deck sys" "plan deck vault"; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; min-height: 0; overflow: auto; }
+  h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .18em; color: var(--dim); }
+  h2::before { content: "▍"; color: var(--accent); }
+  #voice { grid-area: voice; } #deck { grid-area: deck; } #sys { grid-area: sys; }
+  /* 덱 머리줄(전체 복사)은 고정, 대화 목록만 스크롤 */
+  #deck { display: flex; flex-direction: column; overflow: hidden; }
+  #entries { flex: 1; min-height: 0; overflow: auto; }
+  #plan { grid-area: plan; } #vault { grid-area: vault; }
+  .state { display: flex; align-items: center; gap: 10px; font-size: 16px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--dim); }
+  .s-듣는 .dot { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+  .s-받아쓰는 .dot, .s-생각 .dot { background: var(--warn); animation: pulse 1s infinite; }
+  .s-말하는 .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+  canvas { width: 100%; height: 36px; margin: 8px 0; display: block; }
+  .muted { color: var(--dim); }
+  .say { color: var(--accent); margin-top: 6px; }
+  #step { color: var(--warn); min-height: 1.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .steps { list-style: none; padding: 0; margin: 4px 0 0; }
+  .steps li { color: var(--dim); }
+  .steps li::before { content: "· "; color: var(--warn); }
+  .steps li:last-child { color: var(--text); }
+  .working { color: var(--warn); margin-top: 4px; }
+  .entry { border-top: 1px solid var(--line); padding: 8px 0; }
+  .entry:first-child { border-top: 0; }
+  .q { color: var(--accent); } .q::before { content: "▸ "; }
+  .a { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
+  .entry.err .a { color: var(--bad); }
+  .t { color: var(--dim); float: right; }
+  button.copy { float: right; padding: 0 6px; margin-left: 8px; border-color: var(--line); color: var(--dim); font-size: 11px; line-height: 1.5; }
+  button.copy:hover { color: var(--accent); border-color: var(--accent); }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin: 2px 0 8px; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s; }
+  .row { display: flex; justify-content: space-between; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
+  ul { margin: 4px 0 8px; padding-left: 16px; } li { color: var(--dim); }
+  .counts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; text-align: center; margin-bottom: 8px; }
+  .counts div { border: 1px solid var(--line); padding: 4px 0; }
+  .counts b { display: block; font-size: 16px; color: var(--text); }
+  .counts span { font-size: 10px; color: var(--dim); }
+  .warn { color: var(--warn); }
+  footer { display: flex; gap: 10px; padding: 0 16px 12px; align-items: center; }
+  input { flex: 1; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 9px 12px; font: inherit; }
+  input:focus { outline: 1px solid var(--accent); }
+  button { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  .hint { color: var(--dim); white-space: nowrap; }
+  kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: none; grid-template-areas: "voice" "deck" "plan" "sys" "vault"; overflow: auto; }
+    #deck { min-height: 50vh; } .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <b>JARVIS</b><span class="dim" id="vpath">금고 —</span><span class="dim" id="link">연결 중…</span>
+  <button class="tool" id="reload" title="화면만 다시 불러옵니다 — 서버와 작업에는 영향 없음">⟳ 새로고침</button>
+  <span id="clock"></span>
+  <button id="restart" title="서버를 껐다 켭니다 — 진행 중인 작업이 끊깁니다">⏻ 서비스 재시작</button>
+</header>
+<main>
+  <section id="voice"><h2>음성</h2>
+    <div class="state" id="vstate"><span class="dot"></span><span id="vlabel">대기</span></div>
+    <canvas id="meter" width="300" height="36"></canvas>
+    <div id="step"></div>
+    <div class="muted" id="heard">스페이스를 누르고 있는 동안 듣습니다.</div>
+    <div class="say" id="said"></div>
+  </section>
+  <section id="deck"><h2>명령 덱<button class="copy" id="copyall" title="명령 덱의 대화 전체를 복사">⧉ 전체 복사</button></h2><div id="entries"><div class="muted">아직 명령이 없습니다. "오늘 브리핑 해줘", "오늘 계획 세워줘"처럼 말하거나 입력하세요.</div></div></section>
+  <section id="sys"><h2>시스템</h2>
+    <div class="row"><span>CPU</span><span id="cpu">—</span></div><div class="bar"><i id="cpub"></i></div>
+    <div class="row"><span>RAM</span><span id="ram">—</span></div><div class="bar"><i id="ramb"></i></div>
+    <div class="row"><span>GPU</span><span id="gpu">—</span></div>
+  </section>
+  <section id="plan"><h2>오늘 계획</h2><pre id="plantext" class="muted">불러오는 중…</pre></section>
+  <section id="vault"><h2>금고</h2><div id="vaultbody"></div></section>
+</main>
+<footer>
+  <input id="ask" placeholder="JARVIS에게 입력 (Enter)" autocomplete="off">
+  <span class="hint"><kbd>Space</kbd> 누르고 말하기</span>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+let deck = [], pending = null, notice = null;
+
+let voiceNow = "대기", lastStepAt = 0;
+function setVoice(v) {
+  voiceNow = v;
+  $("vlabel").textContent = v;
+  $("vstate").className = "state s-" + v.split(" ")[0];
+}
+
+// 덱은 상태 알림마다 다시 그려져 드래그 선택이 풀린다 — 복사는 버튼으로 한다
+const pairText = d => `[${d.t || ""}] ▸ ${d.q || ""}\n${d.a ?? ""}`;
+function copyBtn(btn, text) {
+  const label = btn.textContent;
+  navigator.clipboard.writeText(text).then(() => { btn.textContent = "✓"; setTimeout(() => btn.textContent = label, 1500); },
+                                         () => { btn.textContent = "✗"; setTimeout(() => btn.textContent = label, 1500); });
+}
+$("copyall").onclick = e => copyBtn(e.currentTarget, deck.map(pairText).join("\n\n"));
+
+const secs = () => pending ? Math.floor((Date.now() - pending.start) / 1000) : 0;
+function renderDeck() {
+  const box = $("entries"); box.replaceChildren();
+  const items = [...deck];
+  if (pending) items.push(pending);
+  if (notice) items.push(notice);
+  if (!items.length) { box.append(el("div", "muted", "아직 명령이 없습니다.")); return; }
+  for (const d of items) {
+    const e = el("div", "entry" + (d.ok === false ? " err" : ""));
+    if (deck.includes(d)) { const b = el("button", "copy", "⧉"); b.title = "이 대화 복사"; b.onclick = () => copyBtn(b, pairText(d)); e.append(b); }
+    e.append(el("span", "t", d.t || ""), el("div", "q", d.q || ""));
+    if (d === pending) {  // 기다리는 동안 실제로 하고 있는 일을 보여 준다
+      const w = el("div", "working", `작업 중 · ${secs()}초`); w.id = "elapsed";
+      const ul = el("ul", "steps"); d.steps.forEach(s => ul.append(el("li", null, s)));
+      e.append(w, ul);
+    } else e.append(el("div", "a", d.a ?? ""));
+    box.append(e);
+  }
+  $("entries").scrollTop = $("entries").scrollHeight;
+}
+setInterval(() => { const w = $("elapsed"); if (w && pending) w.textContent = `작업 중 · ${secs()}초`; }, 1000);
+
+// 소리는 차례대로 — 맞장구가 끝난 뒤 답을 읽는다
+const audioQ = []; let playing = false;
+function playNext() {
+  const u = audioQ.shift();
+  if (!u) { playing = false; return; }
+  playing = true;
+  const a = new Audio(u); a.onended = a.onerror = playNext; a.play().catch(playNext);
+}
+const enqueue = url => { audioQ.push(url); if (!playing) playNext(); };
+
+function renderVault(v) {
+  const b = $("vaultbody");
+  $("vpath").textContent = "금고 " + v.path;
+  if (!v.ok && b.dataset.bad === "1") return;  // 입력 중인 경로·오류 문구를 3초마다 지우지 않는다
+  b.dataset.bad = v.ok ? "" : "1";
+  b.replaceChildren();
+  if (!v.ok) {
+    b.append(el("div", "warn", "금고 경로를 읽을 수 없습니다. 이 PC의 경로를 입력하세요."));
+    const inp = el("input"); inp.value = v.path; inp.style.width = "100%"; inp.style.margin = "8px 0";
+    const btn = el("button", null, "저장");
+    btn.onclick = async () => {
+      const r = await post("/vault", JSON.stringify({ path: inp.value }), "application/json");
+      if (!r.ok) b.firstChild.textContent = (await r.json()).error;
+    };
+    b.append(inp, btn); return;
+  }
+  const c = el("div", "counts");
+  for (const [k, n] of Object.entries(v.counts)) { const d = el("div"); d.append(el("b", null, n), el("span", null, k)); c.append(d); }
+  b.append(c, el("div", "muted", "최근 파일"));
+  const ul = el("ul"); v.recent.forEach(f => ul.append(el("li", null, f))); b.append(ul);
+  b.append(el("div", "muted", "wiki/log.md (최신 순)"));
+  const ul2 = el("ul"); [...v.log].reverse().forEach(l => ul2.append(el("li", null, l.replace(/^## /, "")))); b.append(ul2);
+}
+
+function renderState(s) {
+  const v = s.vitals;
+  $("cpu").textContent = v.cpu.toFixed(0) + "%"; $("cpub").style.width = v.cpu + "%";
+  $("ram").textContent = v.ram.toFixed(0) + "%"; $("ramb").style.width = v.ram + "%";
+  $("gpu").textContent = v.gpu || "—";
+  $("plantext").textContent = s.plan || "오늘 계획 없음 — \"오늘 계획 세워줘\"";
+  $("plantext").className = s.plan ? "" : "muted";
+  renderVault(s.vault);
+  if (!recording()) setVoice(s.voice);
+  const c = s.current;  // 창을 새로 열었거나 이벤트를 놓쳤을 때 서버 기준으로 맞춘다
+  if (c && (!pending || pending.q !== c.q)) pending = { t: now(), q: c.q, steps: c.steps, start: Date.now() - c.elapsed * 1000 };
+  else if (c && pending) pending.steps = c.steps;
+  else if (!c && pending && voiceNow === "대기") pending = null;
+  deck = s.deck; renderDeck();
+}
+
+$("reload").onclick = () => location.reload();
+
+// 재시작: 첫 번째 누름은 무장만(3초), 두 번째 누름에 실행
+let armTimer = null;
+$("restart").onclick = async () => {
+  const b = $("restart");
+  if (!b.classList.contains("armed")) {
+    b.classList.add("armed");
+    b.textContent = pending ? "⚠ 작업이 끊깁니다 — 한 번 더 누르면 재시작" : "⚠ 한 번 더 누르면 재시작";
+    armTimer = setTimeout(() => { b.classList.remove("armed"); b.textContent = "⏻ 서비스 재시작"; }, 3000);
+    return;
+  }
+  clearTimeout(armTimer);
+  b.classList.remove("armed"); b.disabled = true; b.textContent = "재시작 중…";
+  restarting = true;
+  try { await post("/restart", "{}", "application/json"); } catch (e) {}
+};
+
+// 서버가 다시 뜨면(재시작 버튼·server.bat restart) 창을 새로고침해 새 화면 코드를 받는다
+let dropped = false, restarting = false;
+function connect() {
+  const es = new EventSource("/events");
+  es.onopen = () => { if (dropped) location.reload(); $("link").textContent = "연결됨"; $("link").className = "dim"; };
+  es.onerror = () => { dropped = true; $("link").textContent = restarting ? "재시작 중…" : "서버 연결 끊김"; $("link").className = "down"; };
+  es.onmessage = m => {
+    const e = JSON.parse(m.data);
+    if (e.type === "state") renderState(e);
+    else if (e.type === "voice") { if (!recording()) setVoice(e.voice); }
+    else if (e.type === "heard") { notice = null; pending = { t: now(), q: e.text, steps: [], start: Date.now() }; $("heard").textContent = "「" + e.text + "」"; $("said").textContent = ""; renderDeck(); }
+    else if (e.type === "step") { if (pending) pending.steps.push(e.text); lastStepAt = Date.now(); $("step").textContent = e.text; renderDeck(); }
+    else if (e.type === "answer") { deck.push({ t: now(), q: pending?.q, a: e.text, ok: e.ok }); pending = null; $("step").textContent = ""; $("said").textContent = e.say; renderDeck(); }
+    else if (e.type === "error") { pending = null; $("step").textContent = ""; notice = { t: now(), q: "", a: e.text, ok: false }; renderDeck(); }
+    else if (e.type === "audio") enqueue(e.url);
+  };
+}
+
+const now = () => new Date().toTimeString().slice(0, 5);
+const post = (url, body, type) => fetch(url, { method: "POST", body, headers: { "Content-Type": type } });
+
+async function send(text) {
+  const r = await post("/ask", JSON.stringify({ text }), "application/json");
+  if (!r.ok) { notice = { t: now(), q: text, a: (await r.json()).error, ok: false }; renderDeck(); }
+}
+
+$("ask").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.value.trim()) { send(e.target.value.trim()); e.target.value = ""; }
+});
+
+// 누르고 말하기 — 입력란에 포커스가 없을 때 스페이스
+let rec = null, chunks = [], started = 0, stream = null, analyser = null, held = false;
+const recording = () => rec && rec.state === "recording";
+let audioCtx = null;
+function releaseMic() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (audioCtx) audioCtx.close().catch(() => {});
+  stream = null; audioCtx = null; analyser = null;
+}
+async function startRec() {
+  setVoice("마이크 여는 중");  // 블루투스는 통화 모드로 바뀌는 데 0.5~1초 걸린다 — '듣는 중'이 뜬 뒤 말한다
+  try {
+    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch { setVoice("대기"); notice = { t: now(), q: "", a: "마이크를 쓸 수 없습니다(권한 확인).", ok: false }; renderDeck(); return; }
+  if (!held) { releaseMic(); return; }  // 마이크를 여는 사이 스페이스를 뗐다
+  if (!analyser) {
+    audioCtx = new AudioContext(); analyser = audioCtx.createAnalyser(); analyser.fftSize = 256;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+  }
+  chunks = []; rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = async () => {
+    releaseMic();  // 마이크를 닫아야 블루투스 이어폰이 통화 음질에서 스테레오로 돌아온다
+    if (Date.now() - started < 300) { setVoice("대기"); return; }
+    const r = await post("/listen", new Blob(chunks, { type: "audio/webm" }), "audio/webm");
+    if (!r.ok) { setVoice("대기"); notice = { t: now(), q: "", a: (await r.json()).error, ok: false }; renderDeck(); }
+  };
+  started = Date.now(); rec.start(); setVoice("듣는 중");
+}
+// 음성 칸 그림: 듣는 중=마이크 파형, 생각 중=흐르는 파동, 도구 실행 직후=훑는 막대, 그 외=가는 선
+const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function drawMeter() {
+  const c = $("meter"), g = c.getContext("2d"), W = c.width, H = c.height;
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const accent = css("--accent"), warn = css("--warn"), line = css("--line");
+  let data = null;
+  (function frame(t) {
+    g.clearRect(0, 0, W, H);
+    g.lineWidth = 1.5;
+    const busy = ["받아쓰는", "생각"].includes(voiceNow.split(" ")[0]);
+    if (recording() && analyser) {
+      data = data || new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteTimeDomainData(data);
+      g.strokeStyle = accent; g.beginPath();
+      data.forEach((v, i) => { const x = i / data.length * W, y = v / 255 * H; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.stroke();
+    } else if (busy && !still && Date.now() - lastStepAt < 2500) {
+      const x = (t / 4) % (W + 60) - 30;  // 자료를 훑는 막대
+      const grad = g.createLinearGradient(x - 60, 0, x, 0);
+      grad.addColorStop(0, "transparent"); grad.addColorStop(1, warn);
+      g.fillStyle = grad; g.fillRect(x - 60, H / 2 - 3, 60, 6);
+    } else if (busy && !still) {
+      for (const [amp, speed, color] of [[9, 600, warn], [5, 380, accent]]) {  // 생각하는 파동
+        g.strokeStyle = color; g.beginPath();
+        for (let x = 0; x <= W; x += 3) { const y = H / 2 + Math.sin(x / 22 + t / speed) * amp * Math.sin(x / W * Math.PI); x ? g.lineTo(x, y) : g.moveTo(x, y); }
+        g.stroke();
+      }
+    } else {
+      g.strokeStyle = busy ? warn : line; g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+    }
+    requestAnimationFrame(frame);
+  })(0);
+}
+drawMeter();
+const typing = () => document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName);
+const stopRec = () => { held = false; if (recording()) rec.stop(); };
+document.addEventListener("keydown", e => { if (e.code === "Space" && !typing()) { e.preventDefault(); if (!e.repeat && !recording()) { held = true; startRec(); } } });
+document.addEventListener("keyup", e => { if (e.code === "Space") stopRec(); });
+window.addEventListener("blur", stopRec);  // 스페이스를 누른 채 다른 창으로 가면 keyup 을 못 받는다
+
+const tickClock = () => $("clock").textContent = new Date().toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+tickClock(); setInterval(tickClock, 1000);
+connect();
+</script>
+</body>
+</html>
